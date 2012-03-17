@@ -40,6 +40,7 @@ setup(
     zip_safe = False,
     install_requires=[
         'pyramid_simpleauth',
+        'pyramid_basemodel',
         'pyramid',
         'SQLAlchemy',
         'tweepy',
