@@ -21,5 +21,7 @@ can be used as per:
     if request.twitter.has_write_access:
         request.twitter.client.update_status('OMG #lolcats')
 
+
 [pyramid_simpleauth]: http://github.com/thruflo/pyramid_simpleauth
 [pyramid_twitterauth]: http://github.com/thruflo/pyramid_twitterauth
+[tweepy]: https://github.com/tweepy/tweepy
