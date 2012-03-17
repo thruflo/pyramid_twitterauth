@@ -154,7 +154,7 @@ class TwitterRequestAPI(object):
 
 # Reified as the ``request.twitter`` property.
 def get_twitter(request, cls=TwitterRequestAPI):
-    """Return a ``cls`` instance instantiated with ``request.user``::
+    """Return a ``cls`` instance instantiated with ``request``::
       
           >>> from mock import Mock
           >>> mock_cls = Mock()
@@ -166,5 +166,5 @@ def get_twitter(request, cls=TwitterRequestAPI):
       
     """
     
-    return cls(request.user)
+    return cls(request)
 
