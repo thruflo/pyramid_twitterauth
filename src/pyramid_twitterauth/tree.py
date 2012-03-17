@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-"""Provides ``AuthRoot`` traversal root factory."""
+"""Provides ``Root`` as a traversal root factory."""
 
 import logging
 logger = logging.getLogger(__name__)

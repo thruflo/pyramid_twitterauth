@@ -25,7 +25,7 @@ class TwitterRequestAPI(object):
               >>> mock_request = Mock()
               >>> mock_request.user = None
           
-          If ``self.access_permission`` contains 'Read', returns `True`::
+          If ``self.access_permission`` contains 'Read', returns ``True``::
           
               >>> twitter = TwitterRequestAPI(mock_request)
               >>> twitter.access_permission = 'Read only'
@@ -52,7 +52,7 @@ class TwitterRequestAPI(object):
               >>> mock_request = Mock()
               >>> mock_request.user = None
           
-          If ``self.access_permission`` contains 'Write', returns `True`::
+          If ``self.access_permission`` contains 'Write', returns ``True``::
           
               >>> twitter = TwitterRequestAPI(mock_request)
               >>> twitter.access_permission = 'Read and Write'
