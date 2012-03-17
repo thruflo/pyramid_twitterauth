@@ -2,9 +2,6 @@
 
 """Provides an SQLAlchemy based ``TwitterAccount`` model class."""
 
-import logging
-logger = logging.getLogger(__name__)
-
 from sqlalchemy import Column, ForeignKey
 from sqlalchemy import Integer, Unicode
 from sqlalchemy.orm import backref, relationship
