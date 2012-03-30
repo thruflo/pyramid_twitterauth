@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
-"""Provides ``TwitterRequestAPI`` class and a ``get_twitter()`` function to get
-  an instance of it from the current ``request``.
+"""Provides OAuth authenticate, authorize and callback views and a failed view
+  to redirect to when Oauth fails, e.g.: when Twitter is down.
 """
 
 import logging
