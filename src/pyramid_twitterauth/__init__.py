@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
 from .hooks import get_twitter
-from .tree import Root
 
 def includeme(config):
     """Allow developers to use ``config.include('pyramid_twitterauth')``.
@@ -20,8 +19,8 @@ def includeme(config):
       
       Exposes the authentication views::
       
-          >>> args = ('twitterauth', '/oauth/twitter/*traverse')
-          >>> mock_config.add_route.assert_called_with(*args, factory=Root)
+          >>> args = ('twitterauth', 'oauth/twitter/*traverse')
+          >>> mock_config.add_route.assert_called_with(*args)
       
     """
     
