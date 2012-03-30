@@ -39,3 +39,26 @@ class TwitterAccount(Base, BaseMixin):
         return {'twitter_id': self.twitter_id, 'screen_name': self.screen_name}
     
 
+
+def get_existing_twitter_account(twitter_id, cls=TwitterAccount):
+    """Get an existing twitter account from the ``twitter_id`` provided.
+      
+      Setup::
+      
+          >>> from mock import Mock
+          >>> mock_cls = Mock()
+          >>> mock_filtered_query = Mock()
+          >>> mock_filtered_query.first.return_value = 'twitter user 1'
+          >>> mock_cls.query.filter_by.return_value = mock_filtered_query
+      
+      Queries using the ``twitter_id`` and returns the first result::
+      
+          >>> get_existing_twitter_account(1, cls=mock_cls)
+          'twitter user 1'
+          >>> mock_cls.query.filter_by.assert_called_with(twitter_id=1)
+      
+    """
+    
+    query = cls.query.filter_by(twitter_id=twitter_id)
+    return query.first()
+
