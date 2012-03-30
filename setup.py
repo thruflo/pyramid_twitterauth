@@ -15,7 +15,7 @@ def _read(file_name):
 setup(
     name = 'pyramid_twitterauth',
     version = '0.1',
-    description = 'Authenticate and / or authorise users with Twitter OAuth.',
+    description = 'Twitter OAuth for Pyramid.',
     author = 'James Arthur',
     author_email = 'username: thruflo, domain: gmail.com',
     url = 'http://github.com/thruflo/pyramid_twitterauth',
