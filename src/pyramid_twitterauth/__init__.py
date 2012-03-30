@@ -29,7 +29,7 @@ def includeme(config):
     config.set_request_property(get_twitter, 'twitter', reify=True)
     
     # Expose the authentication views.
-    prefix = settings.get('twitterauth.url_prefix', '/oauth/twitter')
+    prefix = settings.get('twitterauth.url_prefix', 'oauth/twitter')
     path = '{0}/*traverse'.format(prefix)
-    config.add_route('twitterauth', path, factory=Root)
+    config.add_route('twitterauth', path)
 
