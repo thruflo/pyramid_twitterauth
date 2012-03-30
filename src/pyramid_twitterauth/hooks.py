@@ -6,6 +6,48 @@
 
 import tweepy
 
+def get_handler(request, Handler=tweepy.OAuthHandler):
+    """Convienience function to get an appropriately configured ``Handler``
+      instance from the current request.
+      
+      Setup::
+      
+          >>> from mock import Mock
+          >>> mock_request = Mock()
+          >>> mock_request.route_url.return_value = 'callback'
+          >>> mock_request.registry.settings = {
+          ...     'twitterauth.oauth_consumer_key': 'key',
+          ...     'twitterauth.oauth_consumer_secret': 'secret'
+          ... }
+          >>> mock_handler_cls = Mock()
+          >>> mock_handler_cls.return_value = 'configured handler'
+      
+      Returns a ``Handler`` initialised with the consumer settings and the
+      callback url::
+      
+          >>> get_handler(mock_request, Handler=mock_handler_cls)
+          'configured handler'
+          >>> args = ('key', 'secret')
+          >>> kwargs = {'callback': 'callback', 'secure': True}
+          >>> mock_handler_cls.assert_called_with(*args, **kwargs)
+      
+      Constructing the callback url from the ``twitterauth`` route::
+      
+          >>> mock_request.route_url.assert_called_with('twitterauth', 
+          ...         traverse=('callback',))
+      
+    """
+    
+    # Get the Twitter app consumer settings.
+    settings = request.registry.settings
+    key = settings.get('twitterauth.oauth_consumer_key')
+    secret = settings.get('twitterauth.oauth_consumer_secret')
+    # Construct the callback url for the oauth dance.
+    callback_url = request.route_url('twitterauth', traverse=('callback',))
+    # Return the configured handler.
+    return Handler(key, secret, callback=callback_url, secure=True)
+
+
 class TwitterRequestAPI(object):
     """Adapts a ``request`` to provide an authenticated Twitter api client
       and information on the Twitter api access level we have for that request's
@@ -70,7 +112,7 @@ class TwitterRequestAPI(object):
         return 'Write' in self.access_permission
     
     
-    def __init__(self, request, Handler=tweepy.OAuthHandler, Api=tweepy.API):
+    def __init__(self, request, handler_factory=get_handler, Api=tweepy.API):
         """Initialise an OAuth handler with the right consumer settings, then
           if the user has a twitter account setup the twitter api client and
           set the access permission.
@@ -79,10 +121,6 @@ class TwitterRequestAPI(object):
           
               >>> from mock import Mock
               >>> mock_request = Mock()
-              >>> mock_request.registry.settings = {
-              ...     'twitterauth.oauth_consumer_key': 'key',
-              ...     'twitterauth.oauth_consumer_secret': 'secret'
-              ... }
               >>> mock_user = Mock()
           
           If there isn't an authenticated user, no dice::
@@ -119,9 +157,9 @@ class TwitterRequestAPI(object):
           
               >>> mock_user.twitter_account = mock_twitter_account
               >>> twitter = TwitterRequestAPI(mock_request, 
-              ...                             Handler=mock_handler_factory, 
+              ...                             handler_factory=mock_handler_factory, 
               ...                             Api=mock_api_factory)
-              >>> mock_handler_factory.assert_called_with('key', 'secret')
+              >>> mock_handler_factory.assert_called_with(mock_request)
               >>> mock_handler.set_access_token.assert_called_with('token', 
               ...                                                  'token secret')
               >>> mock_api_factory.assert_called_with(mock_handler)
@@ -133,10 +171,7 @@ class TwitterRequestAPI(object):
         """
         
         # Initialise an OAuth handler with the right consumer settings.
-        settings = request.registry.settings
-        consumer_key = settings.get('twitterauth.oauth_consumer_key')
-        consumer_secret = settings.get('twitterauth.oauth_consumer_secret')
-        oauth_handler = Handler(consumer_key, consumer_secret)
+        oauth_handler = handler_factory(request)
         # If the user has a twitter account.
         if request.user and hasattr(request.user, 'twitter_account'):
             twitter_account = request.user.twitter_account
@@ -162,7 +197,7 @@ def get_twitter(request, cls=TwitterRequestAPI):
           >>> mock_request = Mock()
           >>> get_twitter(mock_request, cls=mock_cls)
           '<twitter instance>'
-          >>> mock_cls.assert_called_with(mock_request.user)
+          >>> mock_cls.assert_called_with(mock_request)
       
     """
     
