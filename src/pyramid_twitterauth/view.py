@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 import tweepy
 
-from pyramid.httpexceptions import HTTPFound, HTTPUnauthorized
+from pyramid.httpexceptions import HTTPForbidden, HTTPFound, HTTPUnauthorized
 from pyramid.security import forget, remember
 from pyramid.security import NO_PERMISSION_REQUIRED as PUBLIC
 from pyramid.view import view_config
@@ -179,76 +179,119 @@ def oauth_authorize_view(request, do_redirect=_do_oauth_redirect):
 
 @view_config(route_name="twitterauth", name='callback', permission=PUBLIC)
 def oauth_callback_view(request, handler_factory=get_handler, Api=tweepy.API):
-    """"""
+    """Callback view the user is sent back to in order to complete the OAuth
+      dance after authorizing (or denying) the app on the Twitter website.
+      
+      Handles the following failure scenarios:
+      
+      * the user denied our app
+      * our call to the Twitter API to convert our stored request token into
+        an access token fails (for example, because Twitter is over capacity)
+      * our call to the Twitter API to verify the user's credentials (and thus
+        find out who they are) fails
+      * the user's credentials are not verified, i.e.: for some strange reason
+        the access token we got doesn't actually work
+      
+      And the following success scenarios:
+      
+      * update the access token we have on record for the authenticated user
+      * associate a twitter account with the authenticated user
+      * login an existing user through their existing twitter account
+      * signup a new user with a related twitter account
+      
+    """
     
-    # Get the verifier value from the request query string.
+    # Get the verifier and / or denied values from the request query string.
     verifier = request.GET.get('oauth_verifier')
+    denied = request.GET.get('denied')
+    
+    # Get the next_url and is_signin flag from the session.
+    is_signin = request.session.get('twitter_oauth_is_signin')
+    next_url = request.session.get('twitter_oauth_next_url')
+    
     # Pop the request token from the session, where we saved it earlier.
     request_token_key = request.session['twitter_request_token_key']
     request_token_secret = request.session['twitter_request_token_secret']
     del request.session['twitter_request_token_key']
     del request.session['twitter_request_token_secret']
+    
+    # If the user chose not to authorize the app, throw the appropriate
+    # HTTP exception.
+    if denied:
+        HTTPException = HTTPUnauthorized if is_signin else HTTPForbidden
+        return HTTPException()
+    
     # Exchange the request token for an access token.
-    auth = handler_factory(request)
-    auth.set_request_token(request_token_key, request_token_secret)
-    return_value = _attempt_twitter_call(auth.get_access_token, verifier)
-    if isinstance(return_value, HTTPFound):
-        return return_value
+    oauth_handler = handler_factory(request)
+    oauth_handler.set_request_token(request_token_key, request_token_secret)
+    try:
+        oauth_handler.get_access_token(verifier)
+    except tweepy.TweepError:
+        return _redirect_to_failed(request)
+    
     # Get the authenticated user's Twitter details.
-    client = Api(auth)
-    return_value = _attempt_twitter_call(client.verify_credentials)
-    if isinstance(return_value, HTTPFound):
-        return return_value
-    # If authentication was unsuccessful, OAuth failed.
-    if return_value is False:
-        url = request.route_url('twitterauth', traverse=('failed',))
-        return HTTPFound(location=url)
-    # Otherwise we got a Twitter user.
-    twitter_user = return_value
-    # If we don't have a matching user, sign the user up.
-    existing = get_existing_twitter_account(twitter_user.id)
-    if existing:
-        twitter_account = existing
-        user = twitter_account.user
-    else:
+    client = Api(oauth_handler)
+    try:
+        twitter_user = client.verify_credentials()
+    except tweepy.TweepError:
+        return _redirect_to_failed(request)
+    
+    # Get the access permission level from the last_response.
+    access_permission = client.last_response.getheader('X-Access-Level')
+    
+    # If the credentials were not verified, throw the appropriate exception.
+    if twitter_user is False:
+        HTTPException = HTTPUnauthorized if is_signin else HTTPForbidden
+        return HTTPException()
+    
+    # Get or create the twitter account instance corresponding to ``twitter_user``
+    # and update the access token.
+    twitter_account = get_existing_twitter_account(twitter_user.id)
+    if not twitter_account:
         twitter_account = TwitterAccount()
         twitter_account.twitter_id = twitter_user.id
         twitter_account.screen_name = twitter_user.screen_name
-        # XXX can we get the access level from the access token request header?
-        # see current logging in tweepy auth line 124
-        raise NotImplementedError('twitter_account.access_permission')
-        user = simpleauth_model.User()
-        user.username = twitter_user.screen_name
-        user.twitter_account = twitter_account
-        # XXX what if we have a user that's got the twitter username?
-        raise NotImplementedError('existing user with username == screen name?')
-    # Update the access token.
-    twitter_account.oauth_token = auth.access_token.key
-    twitter_account.oauth_token_secret = auth.access_token.secret
-    # Log the user in.
-    headers = remember(request, user.canonical_id)
-    # If this was a sign up.
-    if not existing:
-        # Save the user and twitter_account to the db.
-        model.save(user)
-        # Fire a ``UserSignedUp`` event.
-        request.registry.notify(events.UserSignedUp(request, user))
-        # Get the default url to redirect to.
-        settings = request.registry.settings
-        route_name = settings.get('simpleauth.after_signup_route', 'users')
-    # Otherwise it was a login.
-    else:
-        # Save the twitter_account to the db.
-        model.save(twitter_account)
-        # Get the default url to redirect to.
-        settings = request.registry.settings
-        route_name = settings.get('simpleauth.after_login_route', 'index')
-    # Fire a ``UserLoggedIn`` event.
-    request.registry.notify(events.UserLoggedIn(request, user))
+    twitter_account.oauth_token = oauth_handler.access_token.key
+    twitter_account.oauth_token_secret = oauth_handler.access_token.secret
+    twitter_account.access_permission = access_permission
+    
+    # If we have a ``request.user`` we relate the twitter account to that user.
+    if request.user:
+        twitter_account.user = request.user
+    
+    # If this is a signup and the twitter account isn't related to a user
+    # (either when created previously or just now above) then create a user
+    # with ``@screen_name`` as their username.
+    new_user = None
+    if not twitter_account.user:
+        if not is_signin:
+            return HTTPUnauthorized()
+        new_user = simpleauth_model.User()
+        new_user.username = u'@{0}'.format(twitter_user.screen_name)
+        twitter_account.user = new_user
+    
+    # Save to the db.
+    simpleauth_model.save(twitter_account)
+    
     # XXX should we provide additional info in events / fire custom events for
     # e.g.: Twitter signup and Twitter authorise? This way app devs can easily
     # pick up on users connecting a twitter account for the first time?
-    raise NotImplementedError('twitterauth.events')
+    
+    # Log the user in.
+    user = twitter_account.user
+    headers = remember(request, user.canonical_id)
+    
+    # Notify and get the name of the route to redirect to if a ``next`` param
+    # hasn't been stored in the session.
+    if new_user:
+        request.registry.notify(events.UserSignedUp(request, user))
+        settings = request.registry.settings
+        route_name = settings.get('simpleauth.after_signup_route', 'users')
+    else:
+        request.registry.notify(events.UserLoggedIn(request, user))
+        settings = request.registry.settings
+        route_name = settings.get('simpleauth.after_login_route', 'index')
+    
     # Work out where to redirect to next.
     next_ = request.session.get('twitter_oauth_next_url')
     if next_:
@@ -258,6 +301,7 @@ def oauth_callback_view(request, handler_factory=get_handler, Api=tweepy.API):
             location = request.route_url(route_name, traverse=(user.username,))
         except (KeyError, ComponentLookupError):
             location = '/'
+    
     # Redirect.
     return HTTPFound(location=location, headers=headers)
 
@@ -267,6 +311,39 @@ def oauth_callback_view(request, handler_factory=get_handler, Api=tweepy.API):
 def oauth_failed_view(request):
     """Render a page explaining that Twitter Auth failed, with a link to try
       again, e.g.: after a few seconds when Twitter is back up and working.
+      
+      Setup::
+      
+          >>> from mock import Mock
+          >>> mock_request = Mock()
+      
+      Redirects to authenticate if is a signin and adds a ``next`` param to the
+      redirect url if stored in the session::
+      
+          >>> mock_request.session = {
+          ...     'twitter_oauth_is_signin': True,
+          ...     'twitter_oauth_next_url': '/next'
+          ... }
+          >>> return_value = oauth_failed_view(mock_request)
+          >>> kwargs = {
+          ...     'traverse': ('authenticate',),
+          ...     'query': (('next', '/next'),)
+          ... }
+          >>> mock_request.route_url.assert_called_with('twitterauth', **kwargs)
+      
+      Redirects to authorize if not a signin::
+      
+          >>> mock_request.session = {
+          ...     'twitter_oauth_is_signin': False,
+          ...     'twitter_oauth_next_url': None
+          ... }
+          >>> return_value = oauth_failed_view(mock_request)
+          >>> kwargs = {
+          ...     'traverse': ('authorize',),
+          ...     'query': ()
+          ... }
+          >>> mock_request.route_url.assert_called_with('twitterauth', **kwargs)
+      
     """
     
     # Work out which view to link to.
