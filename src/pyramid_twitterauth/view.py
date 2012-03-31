@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
-"""Provides OAuth authenticate, authorize and callback views and a failed view
-  to redirect to when Oauth fails, e.g.: when Twitter is down.
+"""Provides authenticate, authorize and callback views and a failed view to
+  redirect to when OAuth fails, e.g.: when Twitter is down.
 """
 
 import logging
@@ -21,7 +21,7 @@ from .hooks import get_handler
 from .model import get_existing_twitter_account, TwitterAccount
 
 def _redirect_to_failed(request, redirect_cls=HTTPFound):
-    """Redirect to the oauth failed view.
+    """Redirect to the failed view.
       
       Setup::
       
@@ -45,8 +45,8 @@ def _redirect_to_failed(request, redirect_cls=HTTPFound):
     return redirect_cls(location=url)
 
 def _do_oauth_redirect(request, is_signin, handler_factory=get_handler):
-    """Start the Oauth dance by getting an oauth request token from the Twitter
-      API, storing it in the session and then redirecting to Twitter.
+    """Start the OAuth dance by getting a request token from the Twitter API,
+      storing it in the session and then redirecting to Twitter.
       
       Setup::
       
@@ -60,7 +60,7 @@ def _do_oauth_redirect(request, is_signin, handler_factory=get_handler):
           >>> mock_handler_factory = Mock()
           >>> mock_handler_factory.return_value = mock_handler
       
-      Stores whether this oauth attempt is a signin or not::
+      Stores whether this OAuth attempt is a signin or not::
       
           >>> return_value = _do_oauth_redirect(mock_request, True,
           ...         handler_factory=mock_handler_factory)
@@ -107,7 +107,7 @@ def _do_oauth_redirect(request, is_signin, handler_factory=get_handler):
       
     """
     
-    # Store whether this oauth attempt is a signin or not.
+    # Store whether this OAuth attempt is a signin or not.
     request.session['twitter_oauth_is_signin'] = is_signin
     # If there was a valid ``next`` param in the query string, store that too.
     next_ = request.params.get('next', request.POST.get('next'))
@@ -199,7 +199,7 @@ def oauth_callback_view(request, handler_factory=get_handler, Api=tweepy.API):
     return_value = _attempt_twitter_call(client.verify_credentials)
     if isinstance(return_value, HTTPFound):
         return return_value
-    # If authentication was unsuccessful, oauth failed.
+    # If authentication was unsuccessful, OAuth failed.
     if return_value is False:
         url = request.route_url('twitterauth', traverse=('failed',))
         return HTTPFound(location=url)
@@ -269,7 +269,7 @@ def oauth_failed_view(request):
       again, e.g.: after a few seconds when Twitter is back up and working.
     """
     
-    # Work out which oauth view to link to.
+    # Work out which view to link to.
     is_signin = request.session.get('twitter_oauth_is_signin')
     traverse = ('authenticate',) if is_signin else ('authorize',)
     
