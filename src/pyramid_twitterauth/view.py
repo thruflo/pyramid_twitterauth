@@ -20,21 +20,91 @@ from pyramid_simpleauth import events, schema, model as simpleauth_model
 from .hooks import get_handler
 from .model import get_existing_twitter_account, TwitterAccount
 
-def _attempt_twitter_call(method, *args, **kwargs):
-    """Wraps calls to the Twitter API made as part of the Oauth workflow in
-      with an error handler that redirects to the oauth failed view if the
-      call fails.
+def _redirect_to_failed(request, redirect_cls=HTTPFound):
+    """Redirect to the oauth failed view.
+      
+      Setup::
+      
+          >>> from mock import Mock
+          >>> mock_request = Mock()
+          >>> mock_request.route_url.return_value = 'redirect url'
+          >>> mock_redirect_cls = Mock()
+          >>> mock_redirect_cls.return_value = 'http found'
+      
+      Test::
+      
+          >>> _redirect_to_failed(mock_request, redirect_cls=mock_redirect_cls)
+          'http found'
+          >>> kwargs = dict(traverse=('failed',))
+          >>> mock_request.route_url.assert_called_with('twitterauth', **kwargs)
+          >>> mock_redirect_cls.assert_called_with(location='redirect url')
+      
     """
     
-    try:
-        return method(*args, **kwargs)
-    except tweepy.TweepError:
-        url = request.route_url('twitterauth', traverse=('failed',))
-        return HTTPFound(location=url)
+    url = request.route_url('twitterauth', traverse=('failed',))
+    return redirect_cls(location=url)
 
 def _do_oauth_redirect(request, is_signin, handler_factory=get_handler):
     """Start the Oauth dance by getting an oauth request token from the Twitter
       API, storing it in the session and then redirecting to Twitter.
+      
+      Setup::
+      
+          >>> from mock import Mock
+          >>> mock_request = Mock()
+          >>> mock_request.session = {}
+          >>> mock_handler = Mock()
+          >>> mock_handler.get_authorization_url.return_value = 'url'
+          >>> mock_handler.request_token.key = 'key'
+          >>> mock_handler.request_token.secret = 'secret'
+          >>> mock_handler_factory = Mock()
+          >>> mock_handler_factory.return_value = mock_handler
+      
+      Stores whether this oauth attempt is a signin or not::
+      
+          >>> return_value = _do_oauth_redirect(mock_request, True,
+          ...         handler_factory=mock_handler_factory)
+          >>> mock_request.session['twitter_oauth_is_signin']
+          True
+      
+      If there's a ``next`` param in the request, stores that too::
+      
+          >>> mock_request.params = {'next': '/foo/bar'}
+          >>> return_value = _do_oauth_redirect(mock_request, True,
+          ...         handler_factory=mock_handler_factory)
+          >>> mock_request.session.get('twitter_oauth_next_url')
+          u'/foo/bar'
+      
+      As long as it's a valid path::
+      
+          >>> mock_request.session = {}
+          >>> mock_request.params = {'next': '<script src="javascript:h@x();">'}
+          >>> return_value = _do_oauth_redirect(mock_request, True,
+          ...         handler_factory=mock_handler_factory)
+          >>> mock_request.session.get('twitter_oauth_next_url')
+      
+      Gets a request token from Twitter::
+      
+          >>> mock_request.params = {}
+          >>> mock_request.session = {}
+          >>> return_value = _do_oauth_redirect(mock_request, True,
+          ...         handler_factory=mock_handler_factory)
+          >>> mock_handler_factory.assert_called_with(mock_request)
+          >>> kwargs = dict(signin_with_twitter=True)
+          >>> mock_handler.get_authorization_url.assert_called_with(**kwargs)
+      
+      Stores it in the session::
+      
+          >>> mock_request.session.get('twitter_request_token_key')
+          'key'
+          >>> mock_request.session.get('twitter_request_token_secret')
+          'secret'
+      
+      Redirects to the authorisation url::
+      
+          >>> return_value.location
+          'url'
+      
     """
     
     # Store whether this oauth attempt is a signin or not.
@@ -46,38 +116,68 @@ def _do_oauth_redirect(request, is_signin, handler_factory=get_handler):
     except schema.Invalid as err:
         next_ = None
     if next_:
-        request.session['twitter_oauth_next_url'] = next_url
-    
+        request.session['twitter_oauth_next_url'] = next_
     # Initialise an OAuth handler with the right consumer settings.
-    auth = handler_factory(request)
+    oauth_handler = handler_factory(request)
     # Try and get a request token from Twitter.
-    kwargs = {'signin_with_twitter': is_signin}
-    return_value = _attempt_twitter_call(auth.get_authorization_url, **kwargs)
-    if isinstance(return_value, HTTPFound):
-        return return_value
-    redirect_url = return_value
+    kwargs = dict(signin_with_twitter=is_signin)
+    try:
+        redirect_url = oauth_handler.get_authorization_url(**kwargs)
+    except tweepy.TweepError:
+        return _redirect_to_failed(request)
     # Store the request token in the session.
-    request.session['twitter_request_token_key'] = auth.request_token.key
-    request.session['twitter_request_token_secret'] = auth.request_token.secret
+    token = oauth_handler.request_token
+    request.session['twitter_request_token_key'] = token.key
+    request.session['twitter_request_token_secret'] = token.secret
     # Redirect.
     return HTTPFound(location=redirect_url)
 
 
-@view_config(name='authenticate', permission=PUBLIC)
+@view_config(route_name="twitterauth", name='authenticate', permission=PUBLIC)
 def oauth_authenticate_view(request, do_redirect=_do_oauth_redirect):
-    """Redirect to GET oauth/authenticate."""
+    """Redirect to GET oauth/authenticate.
+      
+      Setup::
+      
+          >>> from mock import Mock
+          >>> mock_request = Mock()
+          >>> mock_do_redirect = Mock()
+          >>> mock_do_redirect.return_value = 'http found'
+      
+      Test::
+      
+          >>> oauth_authenticate_view(mock_request, do_redirect=mock_do_redirect)
+          'http found'
+          >>> mock_do_redirect.assert_called_with(mock_request, True)
+      
+    """
     
     return do_redirect(request, True)
 
 
-@view_config(name='authorize', permission=PUBLIC)
-def oauth_authorize_view(request):
-    """Redirect to GET oauth/authorize."""
+@view_config(route_name="twitterauth", name='authorize', permission=PUBLIC)
+def oauth_authorize_view(request, do_redirect=_do_oauth_redirect):
+    """Redirect to GET oauth/authorize.
+      
+      Setup::
+      
+          >>> from mock import Mock
+          >>> mock_request = Mock()
+          >>> mock_do_redirect = Mock()
+          >>> mock_do_redirect.return_value = 'http found'
+      
+      Test::
+      
+          >>> oauth_authorize_view(mock_request, do_redirect=mock_do_redirect)
+          'http found'
+          >>> mock_do_redirect.assert_called_with(mock_request, False)
+      
+    """
     
     return do_redirect(request, False)
 
 
-@view_config(name='callback', permission=PUBLIC)
+@view_config(route_name="twitterauth", name='callback', permission=PUBLIC)
 def oauth_callback_view(request, handler_factory=get_handler, Api=tweepy.API):
     """"""
     
@@ -162,7 +262,7 @@ def oauth_callback_view(request, handler_factory=get_handler, Api=tweepy.API):
         return HTTPFound(location=location, headers=headers)
 
 
-@view_config(name='failed', permission=PUBLIC,
+@view_config(route_name="twitterauth", name='failed', permission=PUBLIC,
         renderer='pyramid_twitterauth:templates/failed.mako')
 def oauth_failed_view(request):
     """Render a page explaining that Twitter Auth failed, with a link to try
