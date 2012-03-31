@@ -25,7 +25,7 @@ class TwitterAccount(Base, BaseMixin):
     
     # XXX defines a relation to a table defined in `pyramid_simpleauth`.
     user_id = Column(Integer, ForeignKey('auth_users.id'))
-    user = relationship(simpleauth_model.User, backref=_user_backref)
+    user = relationship(simpleauth_model.User, lazy='joined', backref=_user_backref)
     
     def __json__(self):
         """Return a dictionary representation of the ``TwitterAccount`` instance.
