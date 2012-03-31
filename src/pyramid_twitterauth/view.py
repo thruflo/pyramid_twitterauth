@@ -233,33 +233,29 @@ def oauth_callback_view(request, handler_factory=get_handler, Api=tweepy.API):
         model.save(user)
         # Fire a ``UserSignedUp`` event.
         request.registry.notify(events.UserSignedUp(request, user))
-        # Redirect to the user's profile url.
+        # Get the default url to redirect to.
         settings = request.registry.settings
         route_name = settings.get('simpleauth.after_signup_route', 'users')
-        try:
-            location = request.route_url(route_name, traverse=(user.username,))
-        except (KeyError, ComponentLookupError):
-            location = '/'
-        return HTTPFound(location=location, headers=headers)
     # Otherwise it was a login.
     else:
         # Save the twitter_account to the db.
         model.save(twitter_account)
-        # Work out where to redirect to next.
-        next_url = request.session.get('twitter_oauth_next_url')
-        if next_url:
-            location = next_url
-        else: # Get the default url to redirect to.
-            settings = request.registry.settings
-            route_name = settings.get('simpleauth.after_login_route', 'index')
-            try:
-                location = request.route_url(route_name, traverse=(user.username,))
-            except (KeyError, ComponentLookupError):
-                location = '/'
-        # Fire a ``UserLoggedIn`` event.
-        request.registry.notify(events.UserLoggedIn(request, user))
-        # Redirect.
-        return HTTPFound(location=location, headers=headers)
+        # Get the default url to redirect to.
+        settings = request.registry.settings
+        route_name = settings.get('simpleauth.after_login_route', 'index')
+    # Fire a ``UserLoggedIn`` event.
+    request.registry.notify(events.UserLoggedIn(request, user))
+    # Work out where to redirect to next.
+    next_ = request.session.get('twitter_oauth_next_url')
+    if next_:
+        location = next_
+    else:
+        try:
+            location = request.route_url(route_name, traverse=(user.username,))
+        except (KeyError, ComponentLookupError):
+            location = '/'
+    # Redirect.
+    return HTTPFound(location=location, headers=headers)
 
 
 @view_config(route_name="twitterauth", name='failed', permission=PUBLIC,
