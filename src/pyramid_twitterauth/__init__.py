@@ -27,9 +27,10 @@ def includeme(config):
     # Add ``is_authenticated`` and ``user`` properties to the request.
     settings = config.registry.settings
     config.set_request_property(get_twitter, 'twitter', reify=True)
-    
     # Expose the authentication views.
     prefix = settings.get('twitterauth.url_prefix', 'oauth/twitter')
-    path = '{0}/*traverse'.format(prefix)
-    config.add_route('twitterauth', path)
+    config.add_route('twitterauth', '{0}/*traverse'.format(prefix))
+    # Run a venusian scan to pick up the declarative configuration.
+    config.scan('pyramid_twitterauth')
+    
 
