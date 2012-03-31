@@ -67,10 +67,10 @@ class TwitterRequestAPI(object):
               >>> mock_request = Mock()
               >>> mock_request.user = None
           
-          If ``self.access_permission`` contains 'Read', returns ``True``::
+          If ``self.access_permission`` contains 'read', returns ``True``::
           
               >>> twitter = TwitterRequestAPI(mock_request)
-              >>> twitter.access_permission = 'Read only'
+              >>> twitter.access_permission = 'read'
               >>> twitter.has_read_access
               True
           
@@ -82,7 +82,7 @@ class TwitterRequestAPI(object):
           
         """
         
-        return 'Read' in self.access_permission
+        return 'read' in self.access_permission
     
     @property
     def has_write_access(self):
@@ -94,10 +94,10 @@ class TwitterRequestAPI(object):
               >>> mock_request = Mock()
               >>> mock_request.user = None
           
-          If ``self.access_permission`` contains 'Write', returns ``True``::
+          If ``self.access_permission`` contains 'write', returns ``True``::
           
               >>> twitter = TwitterRequestAPI(mock_request)
-              >>> twitter.access_permission = 'Read and Write'
+              >>> twitter.access_permission = 'read-write'
               >>> twitter.has_write_access
               True
           
@@ -109,7 +109,7 @@ class TwitterRequestAPI(object):
           
         """
         
-        return 'Write' in self.access_permission
+        return 'write' in self.access_permission
     
     
     def __init__(self, request, handler_factory=get_handler, Api=tweepy.API):
@@ -145,7 +145,7 @@ class TwitterRequestAPI(object):
               >>> mock_twitter_account = Mock()
               >>> mock_twitter_account.oauth_token = 'token'
               >>> mock_twitter_account.oauth_token_secret = 'token secret'
-              >>> mock_twitter_account.access_permission = 'Read only'
+              >>> mock_twitter_account.access_permission = 'read'
               >>> mock_handler = Mock()
               >>> mock_handler_factory = Mock()
               >>> mock_handler_factory.return_value = mock_handler
