@@ -245,6 +245,10 @@ def oauth_callback_view(request, handler_factory=get_handler, Api=tweepy.API):
         route_name = settings.get('simpleauth.after_login_route', 'index')
     # Fire a ``UserLoggedIn`` event.
     request.registry.notify(events.UserLoggedIn(request, user))
+    # XXX should we provide additional info in events / fire custom events for
+    # e.g.: Twitter signup and Twitter authorise? This way app devs can easily
+    # pick up on users connecting a twitter account for the first time?
+    raise NotImplementedError('twitterauth.events')
     # Work out where to redirect to next.
     next_ = request.session.get('twitter_oauth_next_url')
     if next_:
