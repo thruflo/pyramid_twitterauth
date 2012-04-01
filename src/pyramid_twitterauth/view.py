@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 import tweepy
 
 from pyramid.httpexceptions import HTTPForbidden, HTTPFound, HTTPUnauthorized
-from pyramid.security import forget, remember
+from pyramid.security import forget, remember, unauthenticated_userid
 from pyramid.security import NO_PERMISSION_REQUIRED as PUBLIC
 from pyramid.view import view_config
 from zope.interface.registry import ComponentLookupError
@@ -19,6 +19,56 @@ from pyramid_simpleauth import events, schema, model as simpleauth_model
 
 from .hooks import get_handler
 from .model import get_existing_twitter_account, TwitterAccount
+
+def forbidden_view(request):
+    """Handle a user being denied access to a resource or view by redirecting
+      to authenticate via Twitter.  See the ``pyramid_twitterauth.includeme``
+      function for info on how to expose this view.
+      
+      Setup::
+      
+          >>> from mock import Mock
+          >>> from pyramid_twitterauth import view
+          >>> _unauthenticated_userid = view.unauthenticated_userid
+          >>> view.unauthenticated_userid = Mock()
+          >>> mock_request = Mock()
+          >>> mock_request.path = '/forbidden/page'
+          >>> mock_request.route_url.return_value = '/oauth/twitter/authenticate'
+      
+      If the user is already logged in, it means they don't have the requisit
+      permission, so we raise a 403 Forbidden error::
+      
+          >>> view.unauthenticated_userid.return_value = 1234
+          >>> response = forbidden_view(mock_request)
+          >>> response.status
+          '403 Forbidden'
+      
+      Otherwise we redirect to the authenticate view::
+      
+          >>> view.unauthenticated_userid.return_value = None
+          >>> response = forbidden_view(mock_request)
+          >>> kwargs = {
+          ...     '_query': (('next', '/forbidden/page'),),
+          ...     'traverse': ('authenticate',)
+          ... }
+          >>> mock_request.route_url.assert_called_with('twitterauth', **kwargs)
+          >>> response.location
+          '/oauth/twitter/authenticate'
+          >>> response.status
+          '302 Found'
+      
+      Teardown::
+      
+          >>> view.unauthenticated_userid = _unauthenticated_userid
+      
+    """
+    
+    if unauthenticated_userid(request):
+        return HTTPForbidden()
+    query = (('next', request.path),)
+    url = request.route_url('twitterauth', traverse=('authenticate',), _query=query)
+    return HTTPFound(location=url)
+
 
 def _redirect_to_failed(request, redirect_cls=HTTPFound):
     """Redirect to the failed view.
