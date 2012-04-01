@@ -9,7 +9,7 @@ try: # pragma: no cover
 except ImportError: # pragma: no cover
     pass
 
-def config_factory(**settings):
+def config_factory(is_authenticated=False, **settings):
     """Call with settings to make and configure a configurator instance, binding
       to an in memory db.
     """
@@ -26,41 +26,34 @@ def config_factory(**settings):
     secret = 'E9G2yBiyvp16rZ9hh3QhOe5MXU1Ecwo2LIYEbLbHdto'
     settings['twitterauth.oauth_consumer_key'] = key
     settings['twitterauth.oauth_consumer_secret'] = secret
+    if is_authenticated:
+        settings['simpleauth.set_default_permission'] = False
     # Initialise the ``Configurator`` and setup a session factory.
     config = Configurator(settings=settings)
     config.set_session_factory(UnencryptedCookieSessionFactoryConfig('psst'))
     # Include the dependencies.
     config.include('pyramid_tm')
     config.include('pyramid_simpleauth')
+    config.commit()
     config.include('pyramid_twitterauth')
     config.include('pyramid_basemodel')
+    # Fake authentication if need be.
+    if is_authenticated:
+        config.registry.settings['simpleauth.set_default_permission']
+        from pyramid_simpleauth.model import User
+        return_true = lambda request: True
+        return_user = lambda request: User()
+        config.set_request_property(return_true, 'is_authenticated', reify=True)
+        config.set_request_property(return_user, 'user', reify=True)
     # Return the configurator instance.
     return config
 
-
-class TestCallbackView(unittest.TestCase):
-    """Integration tests for the (lengthy) OAuth callback view."""
+class TestUnpackCallback(unittest.TestCase):
+    """Integration tests for ``view._unpack_callback``."""
     
     def setUp(self):
-        """Bind model to an in memory db and setup a mock request."""
-        
         from mock import Mock
-        from sqlalchemy import engine_from_config
-        from pyramid_basemodel import bind_engine
-        from pyramid_twitterauth import view
-        # Bind the engine to an in memory db just in case.
-        key = 'xZNXRgs8oqEcHOBxf4vpw'
-        secret = 'E9G2yBiyvp16rZ9hh3QhOe5MXU1Ecwo2LIYEbLbHdto'
-        settings = {
-            'sqlalchemy.url': 'sqlite:///:memory:',
-        #    'twitterauth.oauth_consumer_key': key,
-        #    'twitterauth.oauth_consumer_secret': secret
-        }
-        engine = engine_from_config(settings, 'sqlalchemy.')
-        bind_engine(engine, should_drop=True)
-        # Setup a mock request.
         mock_request = Mock()
-        mock_request.config.registry.settings = settings
         mock_request.GET = {}
         mock_request.session = {
             'twitter_request_token_key': 'key',
@@ -78,62 +71,25 @@ class TestCallbackView(unittest.TestCase):
         self.mock_client = Mock()
         self.mock_client.last_response.getheader.return_value = 'read'
         self.mock_api_factory.return_value = self.mock_client
-        # Patch module.
-        self._get_existing_twitter_account = view.get_existing_twitter_account
-        self._remember = view.remember
-        self._save = view.simpleauth_model.save
-        self._TwitterAccount = view.TwitterAccount
-        view.get_existing_twitter_account = Mock()
-        view.remember = Mock()
-        view.remember.return_value = {}
-        view.simpleauth_model.save = Mock()
-        view.TwitterAccount = Mock()
-    
-    def tearDown(self):
-        """Make sure the session is cleared between tests and restore module
-          defaults.
-        """
-        
-        from pyramid_basemodel import Session
-        from pyramid_twitterauth import view
-        
-        # Clear session.
-        Session.remove()
-        # Restore module.
-        view.get_existing_twitter_account = self._get_existing_twitter_account
-        view.remember = self._remember
-        view.simpleauth_model.save = self._save
-        view.TwitterAccount = self._TwitterAccount
     
     def makeOne(self, *args, **kwargs):
         """Call the OAuth callback view and return the response."""
         
-        from pyramid_twitterauth.view import oauth_callback_view
-        return oauth_callback_view(*args, **kwargs)
+        from pyramid_twitterauth.view import _unpack_callback
+        return _unpack_callback(*args, **kwargs)
     
-    def test_denied_signup(self):
-        """If the user denied our app and this is a signup then returns an
-          ``HTTPUnauthorized``.
-        """
-        
-        from pyramid.httpexceptions import HTTPUnauthorized
+    def assertRedirectedToFailed(self, response):
+        from pyramid.httpexceptions import HTTPFound
+        kwargs = dict(traverse=('failed',))
+        self.request.route_url.assert_called_with('twitterauth', **kwargs)
+        self.assertTrue(isinstance(response, HTTPFound))
+    
+    def test_denied(self):
+        """Redirects to the failed view if the user denied our app."""
         
         self.request.GET['denied'] = 'abcd'
-        self.request.session['twitter_oauth_is_signin'] = True
         response = self.makeOne(self.request)
-        self.assertTrue(isinstance(response, HTTPUnauthorized))
-    
-    def test_denied_not_signup(self):
-        """If the user denied our app and this is not a signup then returns an
-          ``HTTPForbidden``.
-        """
-        
-        from pyramid.httpexceptions import HTTPForbidden
-        
-        self.request.GET['denied'] = 'abcd'
-        self.request.session['twitter_oauth_is_signin'] = False
-        response = self.makeOne(self.request)
-        self.assertTrue(isinstance(response, HTTPForbidden))
+        self.assertRedirectedToFailed(response)
     
     def test_convert_to_access_token_fails(self):
         """If our call to the Twitter API to convert our stored request token into
@@ -142,19 +98,12 @@ class TestCallbackView(unittest.TestCase):
         """
         
         import tweepy
-        from mock import Mock
-        from pyramid.httpexceptions import HTTPFound
-        
         def raise_tweepy_error(*args, **kwargs):
             raise tweepy.TweepError('a')
         
-        mock_handler_factory = Mock()
-        mock_handler = Mock()
-        mock_handler.get_access_token = raise_tweepy_error
-        mock_handler_factory.return_value = mock_handler
-        response = self.makeOne(self.request, handler_factory=mock_handler_factory)
-        self.assertTrue(isinstance(response, HTTPFound))
-        self.request.route_url.assert_called_with('twitterauth', traverse=('failed',))
+        self.mock_handler.get_access_token = raise_tweepy_error
+        response = self.makeOne(self.request, handler_factory=self.mock_handler_factory)
+        self.assertRedirectedToFailed(response)
     
     def test_verify_credentials_fails(self):
         """If our call to the Twitter API to verify the user's credentials (and thus
@@ -162,234 +111,330 @@ class TestCallbackView(unittest.TestCase):
         """
         
         import tweepy
-        from mock import Mock
-        from pyramid.httpexceptions import HTTPFound
-        
         def raise_tweepy_error(*args, **kwargs):
             raise tweepy.TweepError('a')
         
-        mock_handler_factory = Mock()
-        mock_api_factory = Mock()
-        mock_client = Mock()
-        mock_client.verify_credentials = raise_tweepy_error
-        mock_api_factory.return_value = mock_client
-        response = self.makeOne(self.request, handler_factory=mock_handler_factory,
-                                Api=mock_api_factory)
-        self.assertTrue(isinstance(response, HTTPFound))
-        mock_api_factory.assert_called_with(mock_handler_factory.return_value)
-        self.request.route_url.assert_called_with('twitterauth', traverse=('failed',))
+        self.mock_client.verify_credentials = raise_tweepy_error
+        response = self.makeOne(self.request, handler_factory=self.mock_handler_factory,
+                Api=self.mock_api_factory)
+        self.assertRedirectedToFailed(response)
     
-    def test_verify_credentials_false_signup(self):
-        """If the user's credentials are not verified and this is a signup,
-          returns ``HTTPUnauthorized``.
-        """
+    def test_verify_credentials_false(self):
+        """Redirects to the failed view if the user's credentials aren't valid."""
         
-        import tweepy
-        from mock import Mock
-        from pyramid.httpexceptions import HTTPUnauthorized
-        
-        mock_handler_factory = Mock()
-        mock_api_factory = Mock()
-        mock_client = Mock()
-        mock_client.verify_credentials.return_value = False
-        mock_api_factory.return_value = mock_client
-        
-        # When a signin, returns HTTPUnauthorized
-        self.request.session['twitter_oauth_is_signin'] = True
-        response = self.makeOne(self.request, handler_factory=mock_handler_factory,
-                                Api=mock_api_factory)
-        self.assertTrue(isinstance(response, HTTPUnauthorized))
+        self.mock_client.verify_credentials.return_value = False
+        response = self.makeOne(self.request, handler_factory=self.mock_handler_factory,
+                Api=self.mock_api_factory)
+        self.assertRedirectedToFailed(response)
     
-    def test_verify_credentials_false_not_signup(self):
-        """If the user's credentials are not verified and this is not a signup,
-          returns ``HTTPForbidden``.
-        """
+    def test_returns_tuple_of_unpacked_elements(self):
+        """Returns ``twitter_user, oauth_handler, access_permission``."""
         
-        import tweepy
+        self.mock_client.verify_credentials.return_value = 'twitter user'
+        self.mock_client.last_response.getheader.return_value = 'access permission'
+        data = self.makeOne(self.request, handler_factory=self.mock_handler_factory,
+                Api=self.mock_api_factory)
+        self.assertTrue(data[0] == 'twitter user')
+        self.assertTrue(data[1] == self.mock_handler)
+        self.assertTrue(data[2] == 'access permission')
+    
+
+class TestAuthenticateCallback(unittest.TestCase):
+    """Integration tests for ``view.authenticate_callback_view``.
+    """
+    
+    def setUp(self):
         from mock import Mock
+        from pyramid_twitterauth import view
+        self._get_existing_twitter_account = view.get_existing_twitter_account
+        self._get_redirect_url = view._get_redirect_url
+        self._save_to_db = view.save_to_db
+        self._remember = view.remember
+        view.get_existing_twitter_account = Mock()
+        view._get_redirect_url = Mock()
+        view.save_to_db = Mock()
+        view.remember = Mock()
+        mock_request = Mock()
+        self.request = mock_request
+        self.request.session = {}
+        self.request.is_authenticated = False
+        self.mock_twitter_account = Mock()
+        self.mock_twitter_user = Mock()
+        self.mock_twitter_user.id = 1234
+        self.mock_twitter_user.screen_name = 'screen name'
+        self.mock_oauth_handler = Mock()
+        self.mock_oauth_handler.access_token.key = 'key'
+        self.mock_oauth_handler.access_token.secret = 'secret'
+        self.access_permission = 'read'
+        self.mock_unpack_callback = Mock()
+        data = (self.mock_twitter_user, self.mock_oauth_handler, self.access_permission)
+        self.mock_unpack_callback.return_value = data
+        view._get_redirect_url.return_value = 'url'
+        view.remember.return_value = {}
+    
+    def tearDown(self):
+        from pyramid_twitterauth import view
+        view.get_existing_twitter_account = self._get_existing_twitter_account
+        view.save_to_db = self._save_to_db
+        view.remember = self._remember
+    
+    def makeOne(self, request):
+        """Call the OAuth callback view and return the response."""
+        
+        from pyramid_twitterauth.view import authenticate_callback_view
+        return authenticate_callback_view(request, unpack=self.mock_unpack_callback)
+    
+    def test_authenticate_auth_user_forbidden(self):
+        """Should not be called by an authenticated user."""
+        
         from pyramid.httpexceptions import HTTPForbidden
         
-        mock_handler_factory = Mock()
-        mock_api_factory = Mock()
-        mock_client = Mock()
-        mock_client.verify_credentials.return_value = False
-        mock_api_factory.return_value = mock_client
-        
-        # When not a signin, returns HTTPForbidden
-        self.request.session['twitter_oauth_is_signin'] = False
-        response = self.makeOne(self.request, handler_factory=mock_handler_factory,
-                                Api=mock_api_factory)
+        self.request.is_authenticated = True
+        response = self.makeOne(self.request)
         self.assertTrue(isinstance(response, HTTPForbidden))
-        
     
-    def test_update_existing_authenticated_users_access_token(self):
-        """If we have an authenticated user with a twitter account, their access
-          token is updated.
-        """
+    def test_unpack_fails(self):
+        """If unpack returns a redirect, returns it."""
         
-        from mock import Mock
-        from pyramid_twitterauth import view
-        mock_twitter_account = Mock()
-        view.get_existing_twitter_account.return_value = mock_twitter_account
-        self.request.user = Mock()
-        response = self.makeOne(self.request, Api=self.mock_api_factory,
-                                handler_factory=self.mock_handler_factory)
-        # The ``twitter_account`` has had it's access details updated.
-        self.assertTrue(mock_twitter_account.oauth_token == 'key')
-        self.assertTrue(mock_twitter_account.oauth_token_secret == 'secret')
-        self.assertTrue(mock_twitter_account.access_permission == 'read')
-        # And the request.user set as it's user.
-        self.assertTrue(mock_twitter_account.user == self.request.user)
-        # And was passed to model.save.
-        view.simpleauth_model.save.assert_called_with(mock_twitter_account)
+        from pyramid.httpexceptions import HTTPFound
+        
+        redirect = HTTPFound(location='/foo')
+        self.mock_unpack_callback.return_value = redirect
+        response = self.makeOne(self.request)
+        self.assertTrue(response.location == '/foo')
     
-    def test_add_twitter_account_to_authenticated_user(self):
-        """If we have an authenticated user without a twitter account, we create
-          a twitter account for them.
-        """
+    def test_gets_existing_from_twitter_user_id(self):
+        """Calls ``get_existing_twitter_account(twitter_user.id)``."""
         
-        from mock import Mock
         from pyramid_twitterauth import view
-        mock_twitter_account = Mock()
-        view.TwitterAccount.return_value = mock_twitter_account
+        
+        self.mock_twitter_user.id = 1234
+        response = self.makeOne(self.request)
+        view.get_existing_twitter_account.assert_called_with(1234)
+    
+    def test_existing_fires_a_login_event(self):
+        """If there's an existing twitter account, fires ``UserLoggedIn``."""
+        
+        from pyramid_twitterauth import view
+        from pyramid_simpleauth.events import UserLoggedIn
+        
+        view.get_existing_twitter_account.return_value = self.mock_twitter_account
+        response = self.makeOne(self.request)
+        event = self.request.registry.notify.call_args[0][0]
+        self.assertTrue(isinstance(event, UserLoggedIn))
+    
+    def test_no_existing_fires_a_signup_event(self):
+        """If there's not existing twitter account, fires ``UserSignedUp``."""
+        
+        from pyramid_twitterauth import view
+        from pyramid_simpleauth.events import UserSignedUp
+        
         view.get_existing_twitter_account.return_value = None
-        mock_twitter_user = Mock()
-        mock_twitter_user.id = 1234
-        mock_twitter_user.screen_name = 'thruflo'
-        self.mock_client.verify_credentials.return_value = mock_twitter_user
-        self.request.user = Mock()
-        response = self.makeOne(self.request, Api=self.mock_api_factory,
-                                handler_factory=self.mock_handler_factory)
-        # The ``twitter_account`` has been created and had it's access details set.
-        self.assertTrue(view.TwitterAccount.called)
-        self.assertTrue(mock_twitter_account.twitter_id == 1234)
-        self.assertTrue(mock_twitter_account.screen_name == 'thruflo')
-        self.assertTrue(mock_twitter_account.oauth_token == 'key')
-        self.assertTrue(mock_twitter_account.oauth_token_secret == 'secret')
-        self.assertTrue(mock_twitter_account.access_permission == 'read')
-        # And the request.user set as it's user.
-        self.assertTrue(mock_twitter_account.user == self.request.user)
-        # And was passed to model.save.
-        view.simpleauth_model.save.assert_called_with(mock_twitter_account)
+        response = self.makeOne(self.request)
+        event = self.request.registry.notify.call_args[0][0]
+        self.assertTrue(isinstance(event, UserSignedUp))
     
-    def test_log_in_existing_user(self):
-        """If we don't have an authenticated user but the twitter user matches
-          an existing twitter account which is related to a user, that user is
-          logged in.
+    def test_existing_saves_updated_twitter_account(self):
+        """If there's an existing twitter account, its updated and saved."""
+        
+        from pyramid_twitterauth import view
+        
+        view.get_existing_twitter_account.return_value = self.mock_twitter_account
+        response = self.makeOne(self.request)
+        view.save_to_db.assert_called_with(self.mock_twitter_account)
+        
+        self.assertTrue(self.mock_twitter_account.screen_name == 'screen name')
+        self.assertTrue(self.mock_twitter_account.oauth_token == 'key')
+        self.assertTrue(self.mock_twitter_account.oauth_token_secret == 'secret')
+        self.assertTrue(self.mock_twitter_account.access_permission == 'read')
+    
+    def test_existing_doesnt_have_id_or_user_set(self):
+        """If there's an existing twitter account, its id and user aren't set."""
+        
+        from pyramid_twitterauth import view
+        from pyramid_simpleauth.model import User
+        
+        view.get_existing_twitter_account.return_value = self.mock_twitter_account
+        response = self.makeOne(self.request)
+        self.assertFalse(isinstance(self.mock_twitter_account.user, User))
+        self.assertFalse(self.mock_twitter_account.twitter_id == 1234)
+    
+    def test_no_existing_creates_and_saves(self):
+        """If there's not an existing twitter account, inserts new 
+          ``twitter_account`` and ``user``.
         """
         
-        from mock import Mock
         from pyramid_twitterauth import view
-        mock_user = Mock()
-        mock_twitter_account = Mock()
-        mock_twitter_account.twitter_id = 1234
-        mock_twitter_account.user = mock_user
-        view.get_existing_twitter_account.return_value = mock_twitter_account
-        mock_twitter_user = Mock()
-        mock_twitter_user.id = 1234
-        self.mock_client.verify_credentials.return_value = mock_twitter_user
-        self.request.user = None
-        response = self.makeOne(self.request, Api=self.mock_api_factory,
-                                handler_factory=self.mock_handler_factory)
-        # The ``twitter_account`` had it's access details set.
-        self.assertTrue(mock_twitter_account.oauth_token == 'key')
-        self.assertTrue(mock_twitter_account.oauth_token_secret == 'secret')
-        self.assertTrue(mock_twitter_account.access_permission == 'read')
-        # And was passed to model.save.
-        view.simpleauth_model.save.assert_called_with(mock_twitter_account)
-        # And the existing ``twitter_account.user`` has been logged in.
-        view.remember.assert_called_with(self.request, mock_user.canonical_id)
-    
-    def test_create_new_user_signin(self):
-        """If we don't have an authenticated user and the twitter user doesn't
-          match an existing twitter account, create a twitter account and a user.
-        """
+        from pyramid_simpleauth.model import User
         
-        from mock import Mock
-        from pyramid_twitterauth import view
-        mock_twitter_account = Mock()
-        mock_twitter_account.user = None
-        view.TwitterAccount.return_value = mock_twitter_account
         view.get_existing_twitter_account.return_value = None
-        mock_twitter_user = Mock()
-        mock_twitter_user.id = 1234
-        mock_twitter_user.screen_name = 'thruflo'
-        self.mock_client.verify_credentials.return_value = mock_twitter_user
-        self.request.user = None
-        self.request.session['twitter_oauth_is_signin'] = True
-        response = self.makeOne(self.request, Api=self.mock_api_factory,
-                                handler_factory=self.mock_handler_factory)
-        # The ``twitter_account`` has been created and had it's access details set.
-        self.assertTrue(view.TwitterAccount.called)
-        self.assertTrue(mock_twitter_account.twitter_id == 1234)
-        self.assertTrue(mock_twitter_account.screen_name == 'thruflo')
-        self.assertTrue(mock_twitter_account.oauth_token == 'key')
-        self.assertTrue(mock_twitter_account.oauth_token_secret == 'secret')
-        self.assertTrue(mock_twitter_account.access_permission == 'read')
-        # Passed to model.save.
-        view.simpleauth_model.save.assert_called_with(mock_twitter_account)
-        # A new user has been created, related and logged in
-        self.assertTrue(isinstance(mock_twitter_account.user, view.simpleauth_model.User))
-        self.assertTrue(mock_twitter_account.user.username == u'thruflo')
-        view.remember.assert_called_with(self.request, mock_twitter_account.user.canonical_id)
-    
-    def test_create_new_user_not_signin(self):
-        """Creating a new user results in unauthorised if not a signin."""
+        response = self.makeOne(self.request)
+        twitter_account = view.save_to_db.call_args[0][0]
         
-        from mock import Mock
-        from pyramid.httpexceptions import HTTPUnauthorized
+        self.assertTrue(twitter_account.twitter_id == 1234)
+        self.assertTrue(twitter_account.screen_name == 'screen name')
+        self.assertTrue(twitter_account.oauth_token == 'key')
+        self.assertTrue(twitter_account.oauth_token_secret == 'secret')
+        self.assertTrue(twitter_account.access_permission == 'read')
+        self.assertTrue(isinstance(twitter_account.user, User))
+        self.assertTrue(twitter_account.user.username == 'screen name')
+    
+    def test_logs_user_in(self):
+        """Actually log the user in."""
+        
         from pyramid_twitterauth import view
-        mock_twitter_account = Mock()
-        mock_twitter_account.user = None
-        view.TwitterAccount.return_value = mock_twitter_account
+        
+        view.get_existing_twitter_account.return_value = self.mock_twitter_account
+        response = self.makeOne(self.request)
+        user = self.mock_twitter_account.user
+        view.remember.assert_called_with(self.request, user.canonical_id)
+    
+    def test_existing_redirects_to_after_login(self):
+        """If there's an existing twitter account, gets redirect url for login."""
+        
+        from pyramid_twitterauth import view
+        
+        self.request.session['twitter_oauth_next'] = 'next'
+        view.get_existing_twitter_account.return_value = self.mock_twitter_account
+        response = self.makeOne(self.request)
+        view._get_redirect_url.assert_called_with(self.request, 'login', 'next')
+        self.assertTrue(response.location == 'url')
+    
+    def test_no_existing_redirects_to_after_signup(self):
+        """If there's not an existing twitter account, gets redirect url for signup."""
+        
+        from pyramid_twitterauth import view
+        
+        self.request.session['twitter_oauth_next'] = 'next'
         view.get_existing_twitter_account.return_value = None
-        mock_twitter_user = Mock()
-        mock_twitter_user.id = 1234
-        mock_twitter_user.screen_name = 'thruflo'
-        self.mock_client.verify_credentials.return_value = mock_twitter_user
-        self.request.user = None
-        self.request.session['twitter_oauth_is_signin'] = False
-        response = self.makeOne(self.request, Api=self.mock_api_factory,
-                                handler_factory=self.mock_handler_factory)
-        self.assertTrue(isinstance(response, HTTPUnauthorized))
-    
-    def test_next_param(self):
-        """Redirects to ``next``."""
-        
-        # Patch ``get_existing_twitter_account`` to return a mock ``twitter_account``.
-        from mock import Mock
-        from pyramid_twitterauth import view
-        mock_twitter_account = Mock()
-        view.get_existing_twitter_account.return_value = mock_twitter_account
-        
-        # Patch ``self.request``.
-        self.request.user = Mock()
-        self.request.session['twitter_oauth_next_url'] = '/next'
-        response = self.makeOne(self.request, Api=self.mock_api_factory,
-                                handler_factory=self.mock_handler_factory)
-        self.assertTrue(response.location == '/next')
-    
-    def test_no_next_no_route(self):
-        """Redirects to ``/``."""
-        
-        # Patch ``get_existing_twitter_account`` to return a mock ``twitter_account``.
-        from mock import Mock
-        from pyramid_twitterauth import view
-        mock_twitter_account = Mock()
-        view.get_existing_twitter_account.return_value = mock_twitter_account
-        self.request.user = Mock()
-        self.request.session['twitter_oauth_next_url'] = None
-        def raise_key_error(*args, **kwargs):
-            raise KeyError
-        
-        self.request.route_url = raise_key_error
-        response = self.makeOne(self.request, Api=self.mock_api_factory,
-                                handler_factory=self.mock_handler_factory)
-        self.assertTrue(response.location == '/')
+        response = self.makeOne(self.request)
+        view._get_redirect_url.assert_called_with(self.request, 'signup', 'next')
+        self.assertTrue(response.location == 'url')
     
 
+class TestAuthorizeCallback(unittest.TestCase):
+    """Integration tests for ``view.authorize_callback_view``.
+    """
+    
+    def setUp(self):
+        from mock import Mock
+        from pyramid_simpleauth.model import User
+        from pyramid_twitterauth import view
+        self._get_existing_twitter_account = view.get_existing_twitter_account
+        self._get_redirect_url = view._get_redirect_url
+        self._save_to_db = view.save_to_db
+        self._remember = view.remember
+        view.get_existing_twitter_account = Mock()
+        view._get_redirect_url = Mock()
+        view.save_to_db = Mock()
+        view.remember = Mock()
+        mock_request = Mock()
+        self.request = mock_request
+        self.request.session = {}
+        self.request.is_authenticated = True
+        self.request.user = User()
+        self.mock_twitter_account = Mock()
+        self.mock_twitter_user = Mock()
+        self.mock_twitter_user.id = 1234
+        self.mock_twitter_user.screen_name = 'screen name'
+        self.mock_oauth_handler = Mock()
+        self.mock_oauth_handler.access_token.key = 'key'
+        self.mock_oauth_handler.access_token.secret = 'secret'
+        self.access_permission = 'read'
+        self.mock_unpack_callback = Mock()
+        data = (self.mock_twitter_user, self.mock_oauth_handler, self.access_permission)
+        self.mock_unpack_callback.return_value = data
+        view._get_redirect_url.return_value = 'url'
+        view.remember.return_value = {}
+    
+    def tearDown(self):
+        from pyramid_twitterauth import view
+        view.get_existing_twitter_account = self._get_existing_twitter_account
+        view.save_to_db = self._save_to_db
+        view.remember = self._remember
+    
+    def makeOne(self, request):
+        """Call the OAuth callback view and return the response."""
+        
+        from pyramid_twitterauth.view import authorize_callback_view
+        return authorize_callback_view(request, unpack=self.mock_unpack_callback)
+    
+    def test_authenticate_auth_user_forbidden(self):
+        """Should not be called after an authentication attempt."""
+        
+        from pyramid.httpexceptions import HTTPForbidden
+        
+        self.request.session['twitter_oauth_is_authenticate'] = True
+        response = self.makeOne(self.request)
+        self.assertTrue(isinstance(response, HTTPForbidden))
+    
+    def test_unpack_fails(self):
+        """If unpack returns a redirect, returns it."""
+        
+        from pyramid.httpexceptions import HTTPFound
+        
+        redirect = HTTPFound(location='/foo')
+        self.mock_unpack_callback.return_value = redirect
+        response = self.makeOne(self.request)
+        self.assertTrue(response.location == '/foo')
+    
+    def test_gets_existing_from_twitter_user_id(self):
+        """Calls ``get_existing_twitter_account(twitter_user.id)``."""
+        
+        from pyramid_twitterauth import view
+        
+        self.mock_twitter_user.id = 1234
+        response = self.makeOne(self.request)
+        view.get_existing_twitter_account.assert_called_with(1234)
+    
+    def test_existing_saves_updated_twitter_account(self):
+        """If there's an existing twitter account, its updated, related to
+          ``request.user`` and saved.
+        """
+        
+        from pyramid_twitterauth import view
+        
+        view.get_existing_twitter_account.return_value = self.mock_twitter_account
+        response = self.makeOne(self.request)
+        view.save_to_db.assert_called_with(self.mock_twitter_account)
+        
+        self.assertTrue(self.mock_twitter_account.screen_name == 'screen name')
+        self.assertTrue(self.mock_twitter_account.oauth_token == 'key')
+        self.assertTrue(self.mock_twitter_account.oauth_token_secret == 'secret')
+        self.assertTrue(self.mock_twitter_account.access_permission == 'read')
+        self.assertTrue(self.mock_twitter_account.user == self.request.user)
+    
+    def test_no_existing_creates_and_saves(self):
+        """If there's not an existing twitter account, creates one, sets
+          the data, related to ``request.user`` and saves.
+        """
+        
+        from pyramid_twitterauth import view
+        
+        view.get_existing_twitter_account.return_value = None
+        response = self.makeOne(self.request)
+        twitter_account = view.save_to_db.call_args[0][0]
+        
+        self.assertTrue(twitter_account.twitter_id == 1234)
+        self.assertTrue(twitter_account.screen_name == 'screen name')
+        self.assertTrue(twitter_account.oauth_token == 'key')
+        self.assertTrue(twitter_account.oauth_token_secret == 'secret')
+        self.assertTrue(twitter_account.access_permission == 'read')
+        self.assertTrue(twitter_account.user == self.request.user)
+    
+    def test_redirects_to_after_connect(self):
+        """Gets redirect url for connect."""
+        
+        from pyramid_twitterauth import view
+        
+        self.request.session['twitter_oauth_next'] = 'next'
+        view.get_existing_twitter_account.return_value = self.mock_twitter_account
+        response = self.makeOne(self.request)
+        view._get_redirect_url.assert_called_with(self.request, 'connect', 'next')
+        self.assertTrue(response.location == 'url')
+    
 
-class TestAuthRedirects(unittest.TestCase):
+class TestAuthenticateRedirects(unittest.TestCase):
     """Functional tests for the auth views."""
     
     def setUp(self):
@@ -413,25 +458,19 @@ class TestAuthRedirects(unittest.TestCase):
         self.assertTrue(location.startswith(twitter_stub))
     
     def test_authorize(self):
-        """A request to the authorize view should redirect to Twitter."""
+        """A request to the authorize view will return 404."""
         
-        res = self.app.post('/oauth/twitter/authorize', status=302)
-        location = res.headers.get('Location')
-        twitter_stub = 'https://api.twitter.com/oauth/authorize?oauth_token='
-        self.assertTrue(location.startswith(twitter_stub))
+        res = self.app.post('/oauth/twitter/authorize', status=404)
     
     def test_invalid_consumer_settings(self):
-        """A request to authenticate or authorize will redirect to failed if the
-          consumer settings are invalid.
+        """A request to authenticate will redirect to failed if the consumer
+          settings are invalid.
         """
         
         settings = self.config.registry.settings
         settings['twitterauth.oauth_consumer_key'] = 'blah'
         settings['twitterauth.oauth_consumer_secret'] = 'wrong'
         res = self.app.post('/oauth/twitter/authenticate', status=302)
-        location = res.headers.get('Location')
-        self.assertTrue(location=='http://localhost/oauth/twitter/failed')
-        res = self.app.post('/oauth/twitter/authorize', status=302)
         location = res.headers.get('Location')
         self.assertTrue(location=='http://localhost/oauth/twitter/failed')
     
@@ -469,10 +508,95 @@ class TestAuthRedirects(unittest.TestCase):
         url = frag[:pos]
         
         # Test that the fragment starts with our callback url.
-        stub = 'http://localhost/oauth/twitter/callback'
+        stub = 'http://localhost/oauth/twitter/authenticate_callback'
         self.assertTrue(url.startswith(stub))
+    
+
+class TestAuthorizeRedirects(unittest.TestCase):
+    """Functional tests for the authorize workflow."""
+    
+    def setUp(self, is_authenticated=True):
+        """Configure the Pyramid application."""
         
-        ## Follow the URL.
-        #res = self.app.get(url, status="*")
+        settings = {'twitterauth.mode': 'connect'}
+        self.config = config_factory(is_authenticated=is_authenticated, **settings)
+        self.app = TestApp(self.config.make_wsgi_app())
+    
+    def tearDown(self):
+        """Make sure the session is cleared between tests."""
+        
+        from pyramid_basemodel import Session
+        Session.remove()
+    
+    def test_authenticate(self):
+        """A request to the authenticate view will return 404."""
+        
+        res = self.app.post('/oauth/twitter/authenticate', status=404)
+    
+    def test_authorize(self):
+        """A request to the authorize view requires authentication and will
+          redirect to Twitter.
+        """
+        
+        self.setUp(is_authenticated=False)
+        res = self.app.post('/oauth/twitter/authorize', status=302)
+        location = res.headers.get('Location')
+        auth_stub = 'http://localhost/auth/login?next'
+        self.assertTrue(location.startswith(auth_stub))
+        
+        self.setUp(is_authenticated=True)
+        res = self.app.post('/oauth/twitter/authorize', status=302)
+        location = res.headers.get('Location')
+        twitter_stub = 'https://api.twitter.com/oauth/authorize?oauth_token='
+        self.assertTrue(location.startswith(twitter_stub))
+    
+    def test_invalid_consumer_settings(self):
+        """A request to authorize will redirect to failed if the consumer
+          settings are invalid.
+        """
+        
+        settings = self.config.registry.settings
+        settings['twitterauth.oauth_consumer_key'] = 'blah'
+        settings['twitterauth.oauth_consumer_secret'] = 'wrong'
+        res = self.app.post('/oauth/twitter/authorize', status=302)
+        location = res.headers.get('Location')
+        self.assertTrue(location=='http://localhost/oauth/twitter/failed')
+    
+    def test_authorize_with_twitter_redirects_to_callback(self):
+        """After a user authorizes with Twitter, they're redirected to the
+          authorize_callback view.
+        """
+        
+        import urllib, urllib2
+        
+        # Get the auth url to redirect to.
+        res = self.app.get('/oauth/twitter/authorize', status=302)
+        
+        # Redirect and parse the response.
+        sock = urllib2.urlopen(res.location)
+        res = TestResponse()
+        res.body = sock.read()
+        sock.close()
+        
+        # Authenticate with our dummy username and password.
+        res.form.set('session[username_or_email]', 'pyramid_twauth')
+        res.form.set('session[password]', 'pyramid_twitterauth')
+        
+        # Submit the form and get the new redirect response.
+        data = urllib.urlencode(res.form.submit_fields())
+        sock = urllib2.urlopen(res.form.action, data)
+        text = sock.read()
+        sock.close()
+        
+        # Manually parse the redirect url out of the meta tag.
+        l = len('<meta http-equiv="refresh" content="0;url=')
+        pos = text.index('<meta http-equiv="refresh" content="0;url=')
+        frag = text[pos+l:]
+        pos = frag.index('">')
+        url = frag[:pos]
+        
+        # Test that the fragment starts with our callback url.
+        stub = 'http://localhost/oauth/twitter/authorize_callback'
+        self.assertTrue(url.startswith(stub))
     
 

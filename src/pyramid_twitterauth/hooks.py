@@ -6,7 +6,7 @@
 
 import tweepy
 
-def get_handler(request, Handler=tweepy.OAuthHandler):
+def get_handler(request, callback=None, Handler=tweepy.OAuthHandler):
     """Convienience function to get an appropriately configured ``Handler``
       instance from the current request.
       
@@ -28,11 +28,13 @@ def get_handler(request, Handler=tweepy.OAuthHandler):
           >>> get_handler(mock_request, Handler=mock_handler_cls)
           'configured handler'
           >>> args = ('key', 'secret')
-          >>> kwargs = {'callback': 'callback', 'secure': True}
+          >>> kwargs = {'callback': None, 'secure': True}
           >>> mock_handler_cls.assert_called_with(*args, **kwargs)
       
       Constructing the callback url from the ``twitterauth`` route::
       
+          >>> get_handler(mock_request, callback='callback', Handler=mock_handler_cls)
+          'configured handler'
           >>> mock_request.route_url.assert_called_with('twitterauth', 
           ...         traverse=('callback',))
       
@@ -43,9 +45,10 @@ def get_handler(request, Handler=tweepy.OAuthHandler):
     key = settings.get('twitterauth.oauth_consumer_key')
     secret = settings.get('twitterauth.oauth_consumer_secret')
     # Construct the callback url for the oauth dance.
-    callback_url = request.route_url('twitterauth', traverse=('callback',))
+    if callback:
+        callback = request.route_url('twitterauth', traverse=(callback,))
     # Return the configured handler.
-    return Handler(key, secret, callback=callback_url, secure=True)
+    return Handler(key, secret, callback=callback, secure=True)
 
 
 class TwitterRequestAPI(object):
