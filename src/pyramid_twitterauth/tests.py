@@ -330,7 +330,7 @@ class TestCallbackView(unittest.TestCase):
         view.simpleauth_model.save.assert_called_with(mock_twitter_account)
         # A new user has been created, related and logged in
         self.assertTrue(isinstance(mock_twitter_account.user, view.simpleauth_model.User))
-        self.assertTrue(mock_twitter_account.user.username == u'@thruflo')
+        self.assertTrue(mock_twitter_account.user.username == u'thruflo')
         view.remember.assert_called_with(self.request, mock_twitter_account.user.canonical_id)
     
     def test_create_new_user_not_signin(self):

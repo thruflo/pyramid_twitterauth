@@ -261,13 +261,17 @@ def oauth_callback_view(request, handler_factory=get_handler, Api=tweepy.API):
     
     # If this is a signup and the twitter account isn't related to a user
     # (either when created previously or just now above) then create a user
-    # with ``@screen_name`` as their username.
+    # with ``screen_name`` as their username.
     new_user = None
     if not twitter_account.user:
         if not is_signin:
             return HTTPUnauthorized()
         new_user = simpleauth_model.User()
-        new_user.username = u'@{0}'.format(twitter_user.screen_name)
+        # XXX note that this currently creates a namespace clash between users
+        # who sign up through some other route and users who sign up through
+        # Twitter.  This limits the utility of the package to either or rather
+        # than both. 
+        new_user.username = twitter_user.screen_name
         twitter_account.user = new_user
     
     # Save to the db.
