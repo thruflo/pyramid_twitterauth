@@ -2,17 +2,26 @@
 
 """Provides an SQLAlchemy based ``TwitterAccount`` model class."""
 
+import json
+
 from sqlalchemy import Column, ForeignKey
-from sqlalchemy import Integer, Unicode
+from sqlalchemy import Integer, Unicode, UnicodeText
 from sqlalchemy.orm import backref, relationship
+
+from zope.interface import implements
 
 from pyramid_basemodel import Base, BaseMixin, Session, save
 from pyramid_simpleauth import model as simpleauth_model
 
 _user_backref = backref("twitter_account", lazy="joined", uselist=False)
+_account_backref = backref("profile", uselist=False)
+
+from .interfaces import ITwitterAccount
 
 class TwitterAccount(Base, BaseMixin):
     """A user's twitter account with oauth token and access permission data."""
+    
+    implements(ITwitterAccount)
     
     __tablename__ = 'auth_twitter_accounts'
     
@@ -36,7 +45,41 @@ class TwitterAccount(Base, BaseMixin):
           
         """
         
-        return {'twitter_id': self.twitter_id, 'screen_name': self.screen_name}
+        data = {'twitter_id': self.twitter_id, 'screen_name': self.screen_name}
+        if self.profile:
+            data.update(self.profile.data)
+        return data
+    
+
+class TwitterProfile(Base, BaseMixin):
+    """Stores a user's twitter profile data as a string."""
+    
+    __tablename__ = 'auth_twitter_profiles'
+    
+    id = Column(Integer, ForeignKey('auth_twitter_accounts.twitter_id'),
+            primary_key=True)
+    twitter_account = relationship(TwitterAccount, backref=_account_backref)
+    
+    @property
+    def data(self):
+        return json.loads(self.data_str)
+    
+    data_str = Column(UnicodeText)
+    
+    def set_data_from_tweepy_user(self, user):
+        data = user.__getstate__()
+        if 'status' in data:
+            del data['status']
+        if 'created_at' in data:
+            data['created_at'] = data['created_at'].isoformat()
+        self.data_str = json.dumps(data)
+    
+    @classmethod
+    def create_from_tweepy_user(cls, user):
+        profile = TwitterProfile()
+        profile.id = user.id
+        profile.set_data_from_tweepy_user(user)
+        return profile
     
 
 

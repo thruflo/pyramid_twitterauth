@@ -20,7 +20,7 @@ from pyramid_simpleauth.schema import Invalid, RequestPath
 from pyramid_simpleauth.model import User
 
 from .hooks import get_handler
-from .model import get_existing_twitter_account, TwitterAccount
+from .model import get_existing_twitter_account, TwitterAccount, TwitterProfile
 
 def forbidden_view(request):
     """Handle a user being denied access to a resource or view by redirecting
@@ -399,12 +399,12 @@ def authenticate_callback_view(request, unpack=_unpack_callback):
     if isinstance(return_value, HTTPFound):
         return return_value
     twitter_user, oauth_handler, access_permission = return_value
-    
     # If there is an existing ``twitter_account`` then this is a login, so
     # update the ``twitter_account`` and generate a login event.
     existing = get_existing_twitter_account(twitter_user.id)
     if existing:
         twitter_account = existing
+        twitter_account.profile.set_data_from_tweepy_user(twitter_user)
         user = twitter_account.user
         event = UserLoggedIn(request, user, data=twitter_user)
         action = 'login'
@@ -415,6 +415,7 @@ def authenticate_callback_view(request, unpack=_unpack_callback):
         twitter_account = TwitterAccount()
         twitter_account.twitter_id = twitter_user.id
         twitter_account.user = user
+        twitter_account.profile = TwitterProfile.create_from_tweepy_user(twitter_user)
         event = UserSignedUp(request, user, data=twitter_user)
         action = 'signup'
     # Update the twitter_account with the latest data, save to the db and
