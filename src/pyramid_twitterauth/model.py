@@ -5,7 +5,7 @@
 import json
 
 from sqlalchemy import Column, ForeignKey
-from sqlalchemy import Integer, Unicode, UnicodeText
+from sqlalchemy import BigInteger, Integer, Unicode, UnicodeText
 from sqlalchemy.orm import backref, relationship
 
 from zope.interface import implements
@@ -25,7 +25,7 @@ class TwitterAccount(Base, BaseMixin):
     
     __tablename__ = 'auth_twitter_accounts'
     
-    twitter_id = Column(Integer, unique=True)
+    twitter_id = Column(BigInteger, unique=True)
     screen_name = Column(Unicode(20))
     
     oauth_token = Column(Unicode(200))
@@ -56,7 +56,7 @@ class TwitterProfile(Base, BaseMixin):
     
     __tablename__ = 'auth_twitter_profiles'
     
-    id = Column(Integer, ForeignKey('auth_twitter_accounts.twitter_id'),
+    id = Column(BigInteger, ForeignKey('auth_twitter_accounts.twitter_id'),
             primary_key=True)
     twitter_account = relationship(TwitterAccount, backref=_account_backref)
     
