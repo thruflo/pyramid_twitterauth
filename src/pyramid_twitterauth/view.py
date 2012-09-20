@@ -428,7 +428,7 @@ def authenticate_callback_view(request, unpack=_unpack_callback):
     request.registry.notify(event)
     # Actually log the user in and then redirect to the appropriate location.
     next_ = request.session.get('twitter_oauth_next')
-    location = _get_redirect_url(request, action, next_)
+    location = _get_redirect_url(request, action, next_, user=user)
     headers = remember(request, user.canonical_id)
     return HTTPFound(location=location, headers=headers)
 
@@ -457,7 +457,7 @@ def authorize_callback_view(request, unpack=_unpack_callback):
     save_to_db(twitter_account)
     # Redirect to the appropriate location.
     next_ = request.session.get('twitter_oauth_next')
-    location = _get_redirect_url(request, 'connect', next_)
+    location = _get_redirect_url(request, 'connect', next_, user=request.user)
     return HTTPFound(location=location)
 
 
