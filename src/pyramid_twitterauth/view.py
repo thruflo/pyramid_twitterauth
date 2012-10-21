@@ -9,6 +9,8 @@ logger = logging.getLogger(__name__)
 
 import tweepy
 
+from formencode import Invalid
+
 from pyramid.httpexceptions import HTTPForbidden, HTTPFound, HTTPUnauthorized
 from pyramid.security import forget, remember, unauthenticated_userid
 from pyramid.security import NO_PERMISSION_REQUIRED as PUBLIC
@@ -16,7 +18,7 @@ from zope.interface.registry import ComponentLookupError
 
 from pyramid_basemodel import save as save_to_db
 from pyramid_simpleauth.events import UserSignedUp, UserLoggedIn
-from pyramid_simpleauth.schema import Invalid, RequestPath
+from pyramid_simpleauth.schema import RequestPath
 from pyramid_simpleauth.model import User
 
 from .hooks import get_handler
