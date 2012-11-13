@@ -42,6 +42,10 @@ class TwitterAccount(Base, BaseMixin):
               >>> account = TwitterAccount(twitter_id=1234, screen_name='thruflo')
               >>> account.__json__()
               {'twitter_id': 1234, 'screen_name': 'thruflo'}
+              >>> account.profile = TwitterProfile()
+              >>> account.profile.data_str = '{"a":"b"}'
+              >>> account.__json__()
+              {u'a': u'b', 'twitter_id': 1234, 'screen_name': 'thruflo'}
           
         """
         

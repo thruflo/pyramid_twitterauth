@@ -145,15 +145,18 @@ class TestAuthenticateCallback(unittest.TestCase):
     
     def setUp(self):
         from mock import Mock
-        from pyramid_twitterauth import view
+        from pyramid_twitterauth import view, model
         self._get_existing_twitter_account = view.get_existing_twitter_account
         self._get_redirect_url = view._get_redirect_url
         self._save_to_db = view.save_to_db
         self._remember = view.remember
+        self._TwitterProfile = model.TwitterProfile
         view.get_existing_twitter_account = Mock()
         view._get_redirect_url = Mock()
         view.save_to_db = Mock()
         view.remember = Mock()
+        model.TwitterProfile.create_from_tweepy_user = Mock()
+        model.TwitterProfile.create_from_tweepy_user.return_value = None
         mock_request = Mock()
         self.request = mock_request
         self.request.session = {}
@@ -173,10 +176,11 @@ class TestAuthenticateCallback(unittest.TestCase):
         view.remember.return_value = {}
     
     def tearDown(self):
-        from pyramid_twitterauth import view
+        from pyramid_twitterauth import view, model
         view.get_existing_twitter_account = self._get_existing_twitter_account
         view.save_to_db = self._save_to_db
         view.remember = self._remember
+        model.TwitterProfile = self._TwitterProfile
     
     def makeOne(self, request):
         """Call the OAuth callback view and return the response."""
@@ -297,7 +301,8 @@ class TestAuthenticateCallback(unittest.TestCase):
         self.request.session['twitter_oauth_next'] = 'next'
         view.get_existing_twitter_account.return_value = self.mock_twitter_account
         response = self.makeOne(self.request)
-        view._get_redirect_url.assert_called_with(self.request, 'login', 'next')
+        self.assertTrue(view._get_redirect_url.call_args_list[0][0] == (
+                self.request, 'login', 'next'))
         self.assertTrue(response.location == 'url')
     
     def test_no_existing_redirects_to_after_signup(self):
@@ -308,7 +313,8 @@ class TestAuthenticateCallback(unittest.TestCase):
         self.request.session['twitter_oauth_next'] = 'next'
         view.get_existing_twitter_account.return_value = None
         response = self.makeOne(self.request)
-        view._get_redirect_url.assert_called_with(self.request, 'signup', 'next')
+        self.assertTrue(view._get_redirect_url.call_args_list[0][0] == (
+                self.request, 'signup', 'next'))
         self.assertTrue(response.location == 'url')
     
 
@@ -430,7 +436,8 @@ class TestAuthorizeCallback(unittest.TestCase):
         self.request.session['twitter_oauth_next'] = 'next'
         view.get_existing_twitter_account.return_value = self.mock_twitter_account
         response = self.makeOne(self.request)
-        view._get_redirect_url.assert_called_with(self.request, 'connect', 'next')
+        self.assertTrue(view._get_redirect_url.call_args_list[0][0] == (
+                self.request, 'connect', 'next'))
         self.assertTrue(response.location == 'url')
     
 
