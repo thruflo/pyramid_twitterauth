@@ -5,6 +5,9 @@
 """
 
 import tweepy
+import tweepy.parsers
+
+from pyramid.settings import asbool
 
 def get_handler(request, callback=None, Handler=tweepy.OAuthHandler):
     """Convienience function to get an appropriately configured ``Handler``
@@ -115,7 +118,7 @@ class TwitterRequestAPI(object):
         return 'write' in self.access_permission
     
     
-    def __init__(self, request, handler_factory=get_handler, Api=tweepy.API):
+    def __init__(self, request, handler_factory=None, api_cls=None, json_parser=None):
         """Initialise an OAuth handler with the right consumer settings, then
           if the user has a twitter account setup the twitter api client and
           set the access permission.
@@ -161,17 +164,32 @@ class TwitterRequestAPI(object):
               >>> mock_user.twitter_account = mock_twitter_account
               >>> twitter = TwitterRequestAPI(mock_request, 
               ...                             handler_factory=mock_handler_factory, 
-              ...                             Api=mock_api_factory)
+              ...                             api_cls=mock_api_factory)
               >>> mock_handler_factory.assert_called_with(mock_request)
               >>> mock_handler.set_access_token.assert_called_with('token', 
               ...                                                  'token secret')
-              >>> mock_api_factory.assert_called_with(mock_handler)
+              >>> mock_api_factory.assert_called_with(mock_handler, parser=None)
               >>> twitter.client
               '<api client>'
               >>> twitter.has_read_access
               True
           
+          If we specify a json parser, the api instance is configured with it::
+          
+              >>> mock_json_parser = Mock()
+              >>> mock_request.registry.settings = {'twitterauth.use_json_parser': 'true'}
+              >>> twitter = TwitterRequestAPI(mock_request, json_parser=mock_json_parser,
+              ...         handler_factory=mock_handler_factory, api_cls=mock_api_factory)
+              >>> mock_api_factory.assert_called_with(mock_handler, parser=mock_json_parser)
+          
         """
+        
+        if handler_factory is None:
+            handler_factory = get_handler
+        if api_cls is None:
+            api_cls = tweepy.API
+        if json_parser is None:
+            json_parser = tweepy.parsers.JSONParser()
         
         # Initialise an OAuth handler with the right consumer settings.
         oauth_handler = handler_factory(request)
@@ -184,7 +202,10 @@ class TwitterRequestAPI(object):
                 oauth_token_secret = twitter_account.oauth_token_secret
                 oauth_handler.set_access_token(oauth_token, oauth_token_secret)
                 # Setup the twitter api client
-                self.client = Api(oauth_handler)
+                settings = request.registry.settings
+                use_json_parser = asbool(settings.get('twitterauth.use_json_parser'))
+                parser = json_parser if use_json_parser else None
+                self.client = api_cls(oauth_handler, parser=parser)
                 # Set the access permission
                 self.access_permission = twitter_account.access_permission
     

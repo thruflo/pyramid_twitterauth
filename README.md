@@ -66,6 +66,11 @@ Views are exposed by default at `/oauth/twitter/...`.  To use a different path:
 
     twitterauth.url_prefix = 'somewhere'
 
+If you'd prefer to tell your tweepy client to parse response data into pure
+python dictionaries, rather than tweepy model classes use:
+
+    twitterauth.use_json_parser = true
+
 # Tests
 
 I've only tested the package under Python 2.6 and 2.7 atm.  You'll need `nose`, 
